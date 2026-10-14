@@ -1,7 +1,7 @@
 import { NavLink, useLocation } from 'react-router-dom'
 import { useI18n } from '@/i18n'
 import { LangSwitcher } from '@/components/LangSwitcher'
-import { Building2, Wrench, Phone, User } from 'lucide-react'
+import { Building2, Wrench, Phone, User, Clock } from 'lucide-react'
 import { useEffect } from 'react'
 
 export function SvLayout({ children }: { children: React.ReactNode }) {
@@ -12,6 +12,7 @@ export function SvLayout({ children }: { children: React.ReactNode }) {
     { to: '/sv', icon: Building2, label: t.nav.apartments, end: true },
     { to: '/sv/incidents', icon: Wrench, label: t.nav.incidents },
     { to: '/sv/contacts', icon: Phone, label: t.nav.contacts },
+    { to: '/sv/timesheet', icon: Clock, label: t.nav.timesheet },
     { to: '/sv/profile', icon: User, label: t.nav.profile },
   ]
 

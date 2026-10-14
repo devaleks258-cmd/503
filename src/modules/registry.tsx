@@ -36,6 +36,7 @@ const SuppliersPage = lazy(() => import('@/modules/admin/SuppliersPage').then(m 
 const SettingsPage = lazy(() => import('@/modules/admin/SettingsPage').then(m => ({ default: m.SettingsPage })))
 const QRLabelsPage = lazy(() => import('@/modules/admin/QRLabelsPage').then(m => ({ default: m.QRLabelsPage })))
 const ReportsPage = lazy(() => import('@/modules/admin/ReportsPage').then(m => ({ default: m.ReportsPage })))
+const TimesheetPage = lazy(() => import('@/modules/timesheet/TimesheetPage').then(m => ({ default: m.TimesheetPage })))
 
 function ApartmentInventoryRoute() {
   const { id } = useParams<{ id: string }>()
@@ -108,6 +109,7 @@ export function AdminRoutes() {
           <Route path="more/settings" element={<SettingsPage />} />
           <Route path="more/qr-labels" element={<QRLabelsPage />} />
           <Route path="more/reports" element={<ReportsPage />} />
+          <Route path="more/timesheet" element={<TimesheetPage />} />
           <Route path="stock/inventory" element={<InventoryScreen scope="warehouse" />} />
           <Route path="apartments/:id/inventory" element={<ApartmentInventoryRoute />} />
           <Route path="*" element={<Navigate to="/admin" replace />} />
@@ -132,6 +134,7 @@ export function SvRoutes() {
           <Route path="incidents" element={<IncidentList />} />
           <Route path="incidents/new" element={<IncidentForm />} />
           <Route path="contacts" element={<ContactsPage />} />
+          <Route path="timesheet" element={<TimesheetPage />} />
           <Route path="profile" element={<ProfilePage />} />
           <Route path="*" element={<Navigate to="/sv" replace />} />
         </Routes>
