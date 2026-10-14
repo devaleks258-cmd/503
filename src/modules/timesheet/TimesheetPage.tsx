@@ -1,56 +1,47 @@
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { useI18n } from '@/i18n'
 import { toast, errorMessage } from '@/lib/toast'
-import { supabase } from '@/lib/supabase'
-import { ChevronLeft, ChevronRight, Plus, Trash2, Clock, X } from 'lucide-react'
+import { fetchApartments } from '@/modules/apartments/api'
+import { ChevronLeft, ChevronRight, Plus, Trash2, Clock, X, Search, Download, CalendarDays } from 'lucide-react'
 import {
-  fetchHousekeepers,
-  fetchWeekReport,
-  fetchShifts,
-  saveShift,
-  deleteShift,
-  fetchBonuses,
-  saveBonus,
-  fetchNormHours,
-  saveNormHour,
-  toIso,
-  parseIso,
-  mondayOf,
-  addDays,
-  hhmm,
-  shiftHours,
-  type HkStaff,
-  type WeekRow,
-  type Shift,
-  type Bonus,
-  type NormHour,
+  fetchHousekeepers, fetchWeekReport, fetchWorkDays, saveWorkDay, deleteWorkDay,
+  fetchWorkLines, syncWorkLines, fetchBonuses, saveBonus, fetchNormHours, saveNormHour,
+  toIso, parseIso, mondayOf, addDays, hhmm, shiftHours,
+  type HkStaff, type WeekRow, type WorkDay, type WorkLine, type Bonus, type NormHour, type AptType,
 } from '@/modules/timesheet/api'
+import type { SvApartment } from '@/lib/database.types'
 
 const DAYS = [0, 1, 2, 3, 4, 5, 6]
 const DAY_KEY = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const
-type AptType = 'studio' | '1br' | '2br'
-
-interface Apt {
-  id: number
-  code: string
-  type: AptType
+const TYPE_COLORS: Record<AptType, string> = {
+  studio: 'bg-sky-100 text-sky-800 border-sky-300 dark:bg-sky-900/40 dark:text-sky-200 dark:border-sky-700',
+  '1br': 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-900/40 dark:text-emerald-200 dark:border-emerald-700',
+  '2br': 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-900/40 dark:text-amber-200 dark:border-amber-700',
 }
+const TYPE_DOT: Record<AptType, string> = {
+  studio: 'bg-sky-500',
+  '1br': 'bg-emerald-500',
+  '2br': 'bg-amber-500',
+}
+const DEFAULT_OPEN = '09:00'
+const DEFAULT_CLOSE = '17:00'
 
-const DEFAULT_START = '09:00'
-const DEFAULT_END = '17:00'
+interface AptPick { id: number; code: string; type: AptType; building: string }
 
 export function TimesheetPage() {
   const { t, n } = useI18n()
   const [weekStart, setWeekStart] = useState(() => toIso(mondayOf(new Date())))
   const [report, setReport] = useState<WeekRow[]>([])
-  const [shifts, setShifts] = useState<Shift[]>([])
-  const [bonuses, setBonuses] = useState<Bonus[]>([])
+  const [workDays, setWorkDays] = useState<WorkDay[]>([])
+  const [workLines, setWorkLines] = useState<WorkLine[]>([])
   const [housekeepers, setHousekeepers] = useState<HkStaff[]>([])
-  const [apartments, setApartments] = useState<Apt[]>([])
+  const [apartments, setApartments] = useState<AptPick[]>([])
   const [normHours, setNormHours] = useState<NormHour[]>([])
+  const [bonuses, setBonuses] = useState<Bonus[]>([])
   const [expanded, setExpanded] = useState<number | null>(null)
-  const [editingShift, setEditingShift] = useState<(Partial<Shift> & { staff_id: number; work_date: string; start_time: string; end_time: string }) | null>(null)
-  const [editingBonus, setEditingBonus] = useState<{ staff_id: number; amount: string; note: string; id?: string } | null>(null)
+  const [dayEditor, setDayEditor] = useState<{ staffId: number; date: string; wd: WorkDay | null } | null>(null)
+  const [bonusEditor, setBonusEditor] = useState<{ staffId: number; amount: string; note: string; id?: string } | null>(null)
+  const [showSummary, setShowSummary] = useState(false)
   const [showNorms, setShowNorms] = useState(false)
   const [normEdits, setNormEdits] = useState<Record<AptType, string>>({ studio: '', '1br': '', '2br': '' })
   const [loading, setLoading] = useState(true)
@@ -58,110 +49,79 @@ export function TimesheetPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [r, s, b, hk, apts, nh] = await Promise.all([
-        fetchWeekReport(weekStart),
-        fetchShifts(weekStart),
-        fetchBonuses(weekStart),
-        fetchHousekeepers(),
-        fetchApartmentsForTimesheet(),
-        fetchNormHours(),
+      const [r, wd, hk, apts, nh, bn] = await Promise.all([
+        fetchWeekReport(weekStart), fetchWorkDays(weekStart), fetchHousekeepers(),
+        fetchApartments(), fetchNormHours(), fetchBonuses(weekStart),
       ])
-      setReport(r)
-      setShifts(s)
-      setBonuses(b)
-      setHousekeepers(hk)
-      setApartments(apts)
-      setNormHours(nh)
+      setReport(r); setWorkDays(wd); setHousekeepers(hk)
+      setApartments(apts.map((a: SvApartment) => ({ id: a.id, code: a.code, type: a.type as AptType, building: a.building })))
+      setNormHours(nh); setBonuses(bn)
       const ne: Record<AptType, string> = { studio: '', '1br': '', '2br': '' }
       nh.forEach((x) => { ne[x.apt_type] = String(x.hours) })
       setNormEdits(ne)
-    } catch (e) {
-      toast(errorMessage(e), 'error')
-    } finally {
-      setLoading(false)
-    }
+      const lines = await fetchWorkLines(wd.map((d) => d.id))
+      setWorkLines(lines)
+    } catch (e) { toast(errorMessage(e), 'error') }
+    finally { setLoading(false) }
   }, [weekStart])
 
   useEffect(() => { load() }, [load])
 
   const weekDates = useMemo(() => DAYS.map((i) => toIso(addDays(parseIso(weekStart), i))), [weekStart])
 
-  const totals = useMemo(() => {
-    const total_hours = report.reduce((s, r) => s + r.total_hours, 0)
-    const norm_hours = report.reduce((s, r) => s + r.norm_hours, 0)
-    const bonus = report.reduce((s, r) => s + r.bonus, 0)
-    return { total_hours, norm_hours, bonus }
-  }, [report])
+  const totals = useMemo(() => ({
+    total: report.reduce((s, r) => s + r.total_hours, 0),
+    norm: report.reduce((s, r) => s + r.norm_hours, 0),
+    bonus: report.reduce((s, r) => s + r.bonus, 0),
+  }), [report])
 
-  const shiftsByStaff = useMemo(() => {
-    const map: Record<number, Shift[]> = {}
-    shifts.forEach((s) => {
-      (map[s.staff_id] ??= []).push(s)
-    })
+  const daysByStaff = useMemo(() => {
+    const map: Record<number, Record<string, WorkDay>> = {}
+    workDays.forEach((d) => { (map[d.staff_id] ??= {})[d.work_date] = d })
     return map
-  }, [shifts])
+  }, [workDays])
+
+  const linesByDay = useMemo(() => {
+    const map: Record<string, WorkLine[]> = {}
+    workLines.forEach((l) => { (map[l.work_day_id] ??= []).push(l) })
+    return map
+  }, [workLines])
 
   const bonusByStaff = useMemo(() => {
     const map: Record<number, Bonus[]> = {}
-    bonuses.forEach((b) => {
-      (map[b.staff_id] ??= []).push(b)
-    })
+    bonuses.forEach((b) => { (map[b.staff_id] ??= []).push(b) })
     return map
   }, [bonuses])
+
+  const normMap = useMemo(() => {
+    const m: Record<string, number> = {}
+    normHours.forEach((x) => { m[x.apt_type] = x.hours })
+    return m
+  }, [normHours])
 
   function prevWeek() { setWeekStart(toIso(addDays(parseIso(weekStart), -7))) }
   function nextWeek() { setWeekStart(toIso(addDays(parseIso(weekStart), 7))) }
   function thisWeek() { setWeekStart(toIso(mondayOf(new Date()))) }
 
-  function openNewShift(staffId: number, date: string) {
-    setEditingShift({ staff_id: staffId, work_date: date, start_time: DEFAULT_START, end_time: DEFAULT_END, apartment_id: null, apt_type: null, note: '' })
-  }
-  function openEditShift(s: Shift) {
-    setEditingShift({ ...s, start_time: hhmm(s.start_time), end_time: hhmm(s.end_time) })
+  const wsDate = parseIso(weekStart)
+  const weekLabel = `${n(toIso(wsDate))} — ${n(toIso(addDays(wsDate, 6)))}`
+
+  function openDayEditor(staffId: number, date: string) {
+    const wd = daysByStaff[staffId]?.[date] ?? null
+    setDayEditor({ staffId, date, wd })
   }
 
-  async function handleSaveShift() {
-    if (!editingShift) return
-    try {
-      const payload = { ...editingShift }
-      if (payload.apartment_id) {
-        const apt = apartments.find((a) => a.id === payload.apartment_id)
-        payload.apt_type = apt?.type ?? null
-      } else {
-        payload.apt_type = null
-      }
-      const saved = await saveShift(payload)
-      setShifts((prev) => {
-        const idx = prev.findIndex((s) => s.id === saved.id)
-        if (idx >= 0) { const cp = [...prev]; cp[idx] = saved; return cp }
-        return [...prev, saved]
-      })
-      setEditingShift(null)
-      toast(t.timesheet.shiftSaved, 'success')
-      load()
-    } catch (e) { toast(errorMessage(e), 'error') }
-  }
-
-  async function handleDeleteShift(id: string) {
-    try {
-      await deleteShift(id)
-      setShifts((prev) => prev.filter((s) => s.id !== id))
-      toast(t.timesheet.shiftDeleted, 'success')
-      load()
-    } catch (e) { toast(errorMessage(e), 'error') }
-  }
-
-  function openBonus(staffId: number) {
+  function openBonusEditor(staffId: number) {
     const existing = bonusByStaff[staffId]?.[0]
-    setEditingBonus({ staff_id: staffId, amount: existing ? String(existing.amount) : '', note: existing?.note ?? '', id: existing?.id })
+    setBonusEditor({ staffId, amount: existing ? String(existing.amount) : '', note: existing?.note ?? '', id: existing?.id })
   }
 
   async function handleSaveBonus() {
-    if (!editingBonus) return
+    if (!bonusEditor) return
     try {
-      const amount = parseFloat(editingBonus.amount) || 0
-      await saveBonus({ id: editingBonus.id, staff_id: editingBonus.staff_id, week_start: weekStart, amount, note: editingBonus.note })
-      setEditingBonus(null)
+      const amount = parseFloat(bonusEditor.amount) || 0
+      await saveBonus({ id: bonusEditor.id, staff_id: bonusEditor.staffId, week_start: weekStart, amount, note: bonusEditor.note })
+      setBonusEditor(null)
       toast(t.timesheet.bonusSaved, 'success')
       load()
     } catch (e) { toast(errorMessage(e), 'error') }
@@ -169,24 +129,39 @@ export function TimesheetPage() {
 
   async function handleSaveNorms() {
     try {
-      for (const apt_type of ['studio', '1br', '2br'] as AptType[]) {
-        const val = parseFloat(normEdits[apt_type])
-        if (!isNaN(val)) await saveNormHour(apt_type, val)
+      for (const at of ['studio', '1br', '2br'] as AptType[]) {
+        const v = parseFloat(normEdits[at])
+        if (!isNaN(v)) await saveNormHour(at, v)
       }
       toast(t.timesheet.normsSaved, 'success')
-      setShowNorms(false)
-      load()
+      setShowNorms(false); load()
     } catch (e) { toast(errorMessage(e), 'error') }
   }
 
-  const wsDate = parseIso(weekStart)
-  const weekLabel = `${n(toIso(wsDate))} — ${n(toIso(addDays(wsDate, 6)))}`
+  function exportCSV() {
+    const sep = ','
+    const header = [t.timesheet.colName, t.timesheet.colHours, t.timesheet.colNorm, t.timesheet.colBonus].join(sep)
+    const rows = report.map((r) =>
+      [r.full_name, r.total_hours.toFixed(1), r.norm_hours.toFixed(1), r.bonus.toFixed(0)].join(sep)
+    )
+    const csv = [header, ...rows, '', `${t.timesheet.colTotal}${sep}${totals.total.toFixed(1)}${sep}${totals.norm.toFixed(1)}${sep}${totals.bonus.toFixed(0)}`].join('\n')
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = `timesheet_${weekStart}.csv`
+    a.click(); URL.revokeObjectURL(url)
+  }
 
   return (
     <div className="px-4 pt-6 pb-28">
-      <h1 className="text-xl font-semibold text-ink mb-4">{t.timesheet.title}</h1>
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-xl font-semibold text-ink">{t.timesheet.title}</h1>
+        <button onClick={exportCSV} className="flex items-center gap-1.5 text-sm text-accent bg-accent-soft px-3 py-1.5 rounded-lg hover:opacity-80 transition-opacity">
+          <Download className="w-4 h-4" /> CSV
+        </button>
+      </div>
 
-      {/* Week navigation */}
+      {/* Week nav */}
       <div className="flex items-center justify-between gap-2 mb-4">
         <button onClick={prevWeek} className="p-2 rounded-lg bg-surface border border-line text-ink hover:bg-app transition-colors">
           <ChevronLeft className="w-5 h-5 rtl:rotate-180" />
@@ -199,53 +174,46 @@ export function TimesheetPage() {
         </button>
       </div>
 
-      {/* Totals card */}
-      <div className="grid grid-cols-3 gap-2 mb-4">
-        <div className="bg-surface border border-line rounded-xl p-3 text-center">
-          <p className="text-xs text-muted mb-1">{t.timesheet.totalHours}</p>
-          <p className="text-lg font-semibold text-ink">{n(totals.total_hours.toFixed(1))}</p>
+      {/* Summary toggle */}
+      <button onClick={() => setShowSummary(v => !v)} className="w-full mb-3 bg-surface border border-line rounded-xl px-4 py-2.5 flex items-center justify-between text-sm text-ink hover:bg-app transition-colors">
+        <span>{t.timesheet.weekSummary}</span>
+        <CalendarDays className="w-4 h-4 text-muted" />
+      </button>
+      {showSummary && (
+        <div className="grid grid-cols-3 gap-2 mb-4">
+          <div className="bg-surface border border-line rounded-xl p-3 text-center">
+            <p className="text-xs text-muted mb-1">{t.timesheet.totalHours}</p>
+            <p className="text-lg font-semibold text-ink">{n(totals.total.toFixed(1))}</p>
+          </div>
+          <div className="bg-surface border border-line rounded-xl p-3 text-center">
+            <p className="text-xs text-muted mb-1">{t.timesheet.normHours}</p>
+            <p className="text-lg font-semibold text-ink">{n(totals.norm.toFixed(1))}</p>
+          </div>
+          <div className="bg-surface border border-line rounded-xl p-3 text-center">
+            <p className="text-xs text-muted mb-1">{t.timesheet.bonus}</p>
+            <p className="text-lg font-semibold text-ink">{n(totals.bonus.toFixed(0))}</p>
+          </div>
         </div>
-        <div className="bg-surface border border-line rounded-xl p-3 text-center">
-          <p className="text-xs text-muted mb-1">{t.timesheet.normHours}</p>
-          <p className="text-lg font-semibold text-ink">{n(totals.norm_hours.toFixed(1))}</p>
-        </div>
-        <div className="bg-surface border border-line rounded-xl p-3 text-center">
-          <p className="text-xs text-muted mb-1">{t.timesheet.bonus}</p>
-          <p className="text-lg font-semibold text-ink">{n(totals.bonus.toFixed(0))}</p>
-        </div>
-      </div>
+      )}
 
-      {/* Norm hours toggle */}
-      <button
-        onClick={() => setShowNorms((v) => !v)}
-        className="w-full mb-4 bg-surface border border-line rounded-xl px-4 py-2.5 flex items-center justify-between text-sm text-ink hover:bg-app transition-colors"
-      >
+      {/* Norms toggle */}
+      <button onClick={() => setShowNorms(v => !v)} className="w-full mb-4 bg-surface border border-line rounded-xl px-4 py-2.5 flex items-center justify-between text-sm text-ink hover:bg-app transition-colors">
         <span>{t.timesheet.normHoursTitle}</span>
         <Clock className="w-4 h-4 text-muted" />
       </button>
       {showNorms && (
-        <div className="bg-surface border border-line rounded-xl p-4 mb-4">
-          <div className="space-y-3">
-            {(['studio', '1br', '2br'] as AptType[]).map((apt_type) => (
-              <div key={apt_type} className="flex items-center gap-3">
-                <label className="text-sm text-muted w-20 flex-shrink-0">{t.timesheet[`norm_${apt_type}` as keyof typeof t.timesheet] as string}</label>
-                <input
-                  type="number"
-                  step="0.5"
-                  value={normEdits[apt_type]}
-                  onChange={(e) => setNormEdits((p) => ({ ...p, [apt_type]: e.target.value }))}
-                  className="flex-1 bg-app border border-line rounded-lg px-3 py-2 text-sm text-ink"
-                />
-                <span className="text-sm text-muted">{t.timesheet.hoursShort}</span>
-              </div>
-            ))}
-          </div>
-          <button
-            onClick={handleSaveNorms}
-            className="w-full mt-3 bg-accent text-white rounded-lg py-2.5 text-sm font-medium"
-          >
-            {t.timesheet.save}
-          </button>
+        <div className="bg-surface border border-line rounded-xl p-4 mb-4 space-y-3">
+          {(['studio', '1br', '2br'] as AptType[]).map((at) => (
+            <div key={at} className="flex items-center gap-3">
+              <span className={`w-2.5 h-2.5 rounded-full ${TYPE_DOT[at]}`} />
+              <label className="text-sm text-muted w-24 flex-shrink-0">{t.timesheet[`norm_${at}` as keyof typeof t.timesheet] as string}</label>
+              <input type="number" step="0.5" value={normEdits[at]}
+                onChange={(e) => setNormEdits(p => ({ ...p, [at]: e.target.value }))}
+                className="flex-1 bg-app border border-line rounded-lg px-3 py-2 text-sm text-ink" />
+              <span className="text-sm text-muted">{t.timesheet.hoursShort}</span>
+            </div>
+          ))}
+          <button onClick={handleSaveNorms} className="w-full mt-1 bg-accent text-white rounded-lg py-2.5 text-sm font-medium">{t.timesheet.save}</button>
         </div>
       )}
 
@@ -256,18 +224,15 @@ export function TimesheetPage() {
       <div className="space-y-2">
         {report.map((row) => {
           const isOpen = expanded === row.staff_id
-          const staffShifts = shiftsByStaff[row.staff_id] ?? []
+          const staffDays = daysByStaff[row.staff_id] ?? {}
           const staffBonus = bonusByStaff[row.staff_id]?.[0]
           return (
             <div key={row.staff_id} className="bg-surface border border-line rounded-xl overflow-hidden">
-              <button
-                onClick={() => setExpanded(isOpen ? null : row.staff_id)}
-                className="w-full px-4 py-3 flex items-center justify-between text-left"
-              >
+              <button onClick={() => setExpanded(isOpen ? null : row.staff_id)} className="w-full px-4 py-3 flex items-center justify-between text-left">
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-ink">{row.full_name}</p>
                   <p className="text-xs text-muted">
-                    {n(row.total_hours.toFixed(1))}h / {n(row.norm_hours.toFixed(1))}h
+                    {n(row.total_hours.toFixed(1))}{t.timesheet.hoursShort} / {n(row.norm_hours.toFixed(1))}{t.timesheet.hoursShort}
                     {row.bonus > 0 && ` + ${n(row.bonus.toFixed(0))}`}
                   </p>
                 </div>
@@ -276,76 +241,40 @@ export function TimesheetPage() {
 
               {isOpen && (
                 <div className="px-4 pb-4 border-t border-line">
-                  {/* Day grid */}
-                  <div className="grid grid-cols-1 gap-2 mt-3">
+                  {/* Mon–Sun bar */}
+                  <div className="grid grid-cols-7 gap-1 mt-3">
                     {DAYS.map((di) => {
                       const date = weekDates[di]
-                      const dayShifts = staffShifts.filter((s) => s.work_date === date)
-                      const dayKey = DAY_KEY[di]
+                      const wd = staffDays[date]
+                      const dayLines = wd ? (linesByDay[wd.id] ?? []) : []
+                      const dayNorm = dayLines.reduce((s, l) => s + (l.apt_type ? normMap[l.apt_type] ?? 0 : 0), 0)
                       return (
-                        <div key={di} className="bg-app rounded-lg p-2.5">
-                          <div className="flex items-center justify-between mb-1.5">
-                            <span className="text-xs font-medium text-muted">
-                              {t.timesheet[`day_${dayKey}` as keyof typeof t.timesheet] as string}
+                        <button key={di} onClick={() => openDayEditor(row.staff_id, date)}
+                          className={`rounded-lg p-1.5 flex flex-col items-center gap-0.5 border transition-colors ${
+                            wd ? 'border-accent bg-accent-soft' : 'border-line bg-app hover:border-accent'
+                          }`}>
+                          <span className="text-[10px] font-medium text-muted">
+                            {t.timesheet[`day_${DAY_KEY[di]}` as keyof typeof t.timesheet] as string}
+                          </span>
+                          <span className="text-[10px] text-muted">{n(date.slice(5))}</span>
+                          {wd ? (
+                            <span className="text-[10px] font-semibold text-accent leading-tight">
+                              {n(hhmm(wd.open_time))}<br/>{n(hhmm(wd.close_time))}
                             </span>
-                            <span className="text-xs text-muted">{n(date.slice(5))}</span>
-                          </div>
-                          {dayShifts.length === 0 && (
-                            <button
-                              onClick={() => openNewShift(row.staff_id, date)}
-                              className="w-full flex items-center justify-center gap-1 text-xs text-accent py-1.5 hover:bg-surface rounded-lg transition-colors"
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                              {t.timesheet.addShift}
-                            </button>
+                          ) : (
+                            <Plus className="w-3 h-3 text-muted mt-0.5" />
                           )}
-                          {dayShifts.map((s) => {
-                            const apt = apartments.find((a) => a.id === s.apartment_id)
-                            const hrs = shiftHours(hhmm(s.start_time), hhmm(s.end_time))
-                            return (
-                              <div key={s.id} className="space-y-1">
-                                <button
-                                  onClick={() => openEditShift(s)}
-                                  className="w-full flex items-center justify-between bg-surface border border-line rounded-lg px-3 py-2 text-sm text-ink hover:border-accent transition-colors"
-                                >
-                                  <span className="font-medium">{n(hhmm(s.start_time))}–{n(hhmm(s.end_time))}</span>
-                                  <span className="text-muted text-xs">
-                                    {apt ? apt.code : '—'}
-                                    {s.note ? ` · ${s.note}` : ''}
-                                  </span>
-                                </button>
-                                <div className="flex items-center justify-between px-1">
-                                  <span className="text-xs text-muted">{n(hrs.toFixed(1))} {t.timesheet.hoursShort}</span>
-                                  <button
-                                    onClick={() => handleDeleteShift(s.id)}
-                                    className="text-bad p-1 hover:bg-bad-soft rounded-lg transition-colors"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
-                              </div>
-                            )
-                          })}
-                          {dayShifts.length > 0 && (
-                            <button
-                              onClick={() => openNewShift(row.staff_id, date)}
-                              className="w-full flex items-center justify-center gap-1 text-xs text-accent py-1.5 mt-1 hover:bg-surface rounded-lg transition-colors"
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                              {t.timesheet.addShift}
-                            </button>
+                          {dayNorm > 0 && (
+                            <span className="text-[9px] text-muted">{n(dayNorm.toFixed(1))}{t.timesheet.hoursShort}</span>
                           )}
-                        </div>
+                        </button>
                       )
                     })}
                   </div>
 
-                  {/* Bonus section */}
+                  {/* Bonus row */}
                   <div className="mt-3 pt-3 border-t border-line">
-                    <button
-                      onClick={() => openBonus(row.staff_id)}
-                      className="w-full flex items-center justify-between text-sm text-ink py-1.5"
-                    >
+                    <button onClick={() => openBonusEditor(row.staff_id)} className="w-full flex items-center justify-between text-sm text-ink py-1.5">
                       <span className="text-muted">{t.timesheet.bonus}</span>
                       <span className="font-medium">{n((staffBonus?.amount ?? 0).toFixed(0))}</span>
                     </button>
@@ -357,173 +286,244 @@ export function TimesheetPage() {
         })}
       </div>
 
-      {/* Shift editor modal */}
-      {editingShift && (
-        <ShiftModal
-          t={t}
-          n={n}
-          shift={editingShift}
-          apartments={apartments}
-          onChange={setEditingShift}
-          onSave={handleSaveShift}
-          onClose={() => setEditingShift(null)}
+      {/* Type legend */}
+      <div className="flex items-center gap-4 mt-4 justify-center">
+        {(['studio', '1br', '2br'] as AptType[]).map((at) => (
+          <div key={at} className="flex items-center gap-1.5">
+            <span className={`w-2.5 h-2.5 rounded-full ${TYPE_DOT[at]}`} />
+            <span className="text-xs text-muted">{t.timesheet[`norm_${at}` as keyof typeof t.timesheet] as string}</span>
+          </div>
+        ))}
+      </div>
+
+      {dayEditor && (
+        <DayEditor
+          t={t} n={n} staffId={dayEditor.staffId} date={dayEditor.date} wd={dayEditor.wd}
+          apartments={apartments} normMap={normMap} existingLines={dayEditor.wd ? linesByDay[dayEditor.wd.id] ?? [] : []}
+          onClose={() => setDayEditor(null)}
+          onSaved={() => { setDayEditor(null); load() }}
         />
       )}
 
-      {/* Bonus editor modal */}
-      {editingBonus && (
-        <BonusModal
-          t={t}
-          n={n}
-          data={editingBonus}
-          onChange={setEditingBonus}
-          onSave={handleSaveBonus}
-          onClose={() => setEditingBonus(null)}
-        />
+      {bonusEditor && (
+        <BonusModal t={t} n={n} data={bonusEditor} onChange={setBonusEditor} onSave={handleSaveBonus} onClose={() => setBonusEditor(null)} />
       )}
     </div>
   )
 }
 
-function fetchApartmentsForTimesheet(): Promise<Apt[]> {
-  return import('@/modules/apartments/api').then(({ fetchApartments }) =>
-    fetchApartments().then((a) => a.map((x) => ({ id: x.id, code: x.code, type: x.type as AptType })))
-  )
-}
+// ── Day Editor Sheet ──────────────────────────────────────────
 
-interface ShiftModalProps {
+interface DayEditorProps {
   t: ReturnType<typeof useI18n>['t']
   n: ReturnType<typeof useI18n>['n']
-  shift: Partial<Shift> & { staff_id: number; work_date: string; start_time: string; end_time: string }
-  apartments: Apt[]
-  onChange: (s: Partial<Shift> & { staff_id: number; work_date: string; start_time: string; end_time: string }) => void
-  onSave: () => void
+  staffId: number
+  date: string
+  wd: WorkDay | null
+  apartments: AptPick[]
+  normMap: Record<string, number>
+  existingLines: WorkLine[]
   onClose: () => void
+  onSaved: () => void
 }
 
-function ShiftModal({ t, n, shift, apartments, onChange, onSave, onClose }: ShiftModalProps) {
+function DayEditor({ t, n, staffId, date, wd, apartments, normMap, existingLines, onClose, onSaved }: DayEditorProps) {
+  const [openTime, setOpenTime] = useState(wd ? hhmm(wd.open_time) : DEFAULT_OPEN)
+  const [closeTime, setCloseTime] = useState(wd ? hhmm(wd.close_time) : DEFAULT_CLOSE)
+  const [note, setNote] = useState(wd?.note ?? '')
+  const [selectedApts, setSelectedApts] = useState<number[]>(() =>
+    existingLines.map((l) => l.apartment_id).filter((x): x is number => x !== null)
+  )
+  const [search, setSearch] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const actualHours = useMemo(() => shiftHours(openTime, closeTime), [openTime, closeTime])
+
+  const normTotal = useMemo(() => {
+    return selectedApts.reduce((s, aid) => {
+      const apt = apartments.find((a) => a.id === aid)
+      return s + (apt ? normMap[apt.type] ?? 0 : 0)
+    }, 0)
+  }, [selectedApts, apartments, normMap])
+
+  const filteredApts = useMemo(() => {
+    const q = search.toLowerCase().trim()
+    return apartments.filter((a) => !q || a.code.toLowerCase().includes(q) || a.building.toLowerCase().includes(q))
+  }, [apartments, search])
+
+  function toggleApt(id: number) {
+    setSelectedApts((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id])
+  }
+
+  async function handleSave() {
+    setSaving(true)
+    try {
+      const savedWd = await saveWorkDay({ id: wd?.id, staff_id: staffId, work_date: date, open_time: openTime, close_time: closeTime, note: note || null })
+      const apts = selectedApts.map((aid) => {
+        const a = apartments.find((x) => x.id === aid)!
+        return { apartment_id: aid, apt_type: a.type }
+      })
+      await syncWorkLines(savedWd.id, apts)
+      toast(t.timesheet.daySaved, 'success')
+      onSaved()
+    } catch (e) { toast(errorMessage(e), 'error') }
+    finally { setSaving(false) }
+  }
+
+  async function handleDelete() {
+    if (!wd) { onClose(); return }
+    setSaving(true)
+    try {
+      await deleteWorkDay(wd.id)
+      toast(t.timesheet.dayDeleted, 'success')
+      onSaved()
+    } catch (e) { toast(errorMessage(e), 'error') }
+    finally { setSaving(false) }
+  }
+
   return (
-    <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center bg-black/40" onClick={onClose}>
-      <div className="bg-surface w-full max-w-lg rounded-t-2xl sm:rounded-2xl border border-line p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-base font-semibold text-ink">
-            {shift.id ? t.timesheet.editShift : t.timesheet.addShift}
-          </h2>
+    <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center bg-black/40 anim-scrim" onClick={onClose}>
+      <div className="bg-surface w-full max-w-lg rounded-t-2xl sm:rounded-2xl border border-line max-h-[90vh] overflow-y-auto anim-sheet" onClick={(e) => e.stopPropagation()}>
+        <div className="sticky top-0 bg-surface px-5 pt-5 pb-3 border-b border-line flex items-center justify-between">
+          <h2 className="text-base font-semibold text-ink">{n(date)} — {t.timesheet.workDay}</h2>
           <button onClick={onClose} className="p-1 text-muted hover:text-ink"><X className="w-5 h-5" /></button>
         </div>
-        <div className="space-y-3">
-          <div>
-            <label className="text-sm text-muted block mb-1">{t.timesheet.date}</label>
-            <input
-              type="date"
-              value={shift.work_date}
-              onChange={(e) => onChange({ ...shift, work_date: e.target.value })}
-              className="w-full bg-app border border-line rounded-lg px-3 py-2.5 text-sm text-ink"
-            />
-          </div>
+
+        <div className="p-5 space-y-4">
+          {/* Open / Close times */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-sm text-muted block mb-1">{t.timesheet.startTime}</label>
-              <input
-                type="time"
-                value={shift.start_time}
-                onChange={(e) => onChange({ ...shift, start_time: e.target.value })}
-                className="w-full bg-app border border-line rounded-lg px-3 py-2.5 text-sm text-ink"
-              />
+              <label className="text-sm text-muted block mb-1">{t.timesheet.openTime}</label>
+              <input type="time" value={openTime} onChange={(e) => setOpenTime(e.target.value)}
+                className="w-full bg-app border border-line rounded-lg px-3 py-2.5 text-sm text-ink" />
             </div>
             <div>
-              <label className="text-sm text-muted block mb-1">{t.timesheet.endTime}</label>
-              <input
-                type="time"
-                value={shift.end_time}
-                onChange={(e) => onChange({ ...shift, end_time: e.target.value })}
-                className="w-full bg-app border border-line rounded-lg px-3 py-2.5 text-sm text-ink"
-              />
+              <label className="text-sm text-muted block mb-1">{t.timesheet.closeTime}</label>
+              <input type="time" value={closeTime} onChange={(e) => setCloseTime(e.target.value)}
+                className="w-full bg-app border border-line rounded-lg px-3 py-2.5 text-sm text-ink" />
             </div>
           </div>
-          <div>
-            <label className="text-sm text-muted block mb-1">{t.timesheet.apartment}</label>
-            <select
-              value={shift.apartment_id ?? ''}
-              onChange={(e) => onChange({ ...shift, apartment_id: e.target.value ? Number(e.target.value) : null })}
-              className="w-full bg-app border border-line rounded-lg px-3 py-2.5 text-sm text-ink"
-            >
-              <option value="">—</option>
-              {apartments.map((a) => (
-                <option key={a.id} value={a.id}>{a.code}</option>
-              ))}
-            </select>
+
+          {/* Live actual / norm */}
+          <div className="grid grid-cols-2 gap-2">
+            <div className={`rounded-lg p-3 text-center border ${actualHours >= normTotal ? 'border-line bg-app' : 'border-warn bg-warn-soft'}`}>
+              <p className="text-xs text-muted mb-0.5">{t.timesheet.actual}</p>
+              <p className="text-lg font-semibold text-ink">{n(actualHours.toFixed(1))}{t.timesheet.hoursShort}</p>
+            </div>
+            <div className="rounded-lg p-3 text-center border border-line bg-app">
+              <p className="text-xs text-muted mb-0.5">{t.timesheet.normHours}</p>
+              <p className="text-lg font-semibold text-ink">{n(normTotal.toFixed(1))}{t.timesheet.hoursShort}</p>
+            </div>
           </div>
+          {normTotal > 0 && (
+            <div className={`text-center text-xs font-medium ${actualHours >= normTotal ? 'text-ok' : 'text-warn'}`}>
+              {actualHours >= normTotal ? t.timesheet.normMet : t.timesheet.normShort}
+            </div>
+          )}
+
+          {/* Note */}
           <div>
             <label className="text-sm text-muted block mb-1">{t.timesheet.note}</label>
-            <input
-              type="text"
-              value={shift.note ?? ''}
-              onChange={(e) => onChange({ ...shift, note: e.target.value })}
+            <input type="text" value={note} onChange={(e) => setNote(e.target.value)}
               placeholder={t.timesheet.notePlaceholder}
-              className="w-full bg-app border border-line rounded-lg px-3 py-2.5 text-sm text-ink"
-            />
+              className="w-full bg-app border border-line rounded-lg px-3 py-2.5 text-sm text-ink" />
           </div>
+
+          {/* Apartment search */}
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)}
+              placeholder={t.timesheet.searchApt}
+              className="w-full bg-app rounded-lg pl-10 pr-4 py-2.5 text-sm border border-line focus:border-accent focus:outline-none" />
+          </div>
+
+          {/* Apartment list with color + checkbox */}
+          <div className="space-y-1.5 max-h-52 overflow-y-auto">
+            {filteredApts.map((a) => {
+              const checked = selectedApts.includes(a.id)
+              return (
+                <button key={a.id} onClick={() => toggleApt(a.id)}
+                  className={`w-full flex items-center gap-2.5 rounded-lg px-3 py-2 border transition-colors text-left ${
+                    checked ? 'border-accent bg-accent-soft' : 'border-line bg-app hover:border-accent'
+                  }`}>
+                  <span className={`w-3 h-3 rounded-full flex-shrink-0 ${TYPE_DOT[a.type]}`} />
+                  <span className="text-sm font-medium text-ink flex-1">{n(a.code)}</span>
+                  <span className="text-xs text-muted">{t.timesheet[`norm_${a.type}` as keyof typeof t.timesheet] as string}</span>
+                  <span className="text-xs text-muted">{n((normMap[a.type] ?? 0).toFixed(1))}{t.timesheet.hoursShort}</span>
+                  {checked && <span className="w-5 h-5 rounded-full bg-accent text-white flex items-center justify-center text-xs flex-shrink-0">✓</span>}
+                </button>
+              )
+            })}
+          </div>
+
+          {/* Selected chips */}
+          {selectedApts.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {selectedApts.map((aid) => {
+                const a = apartments.find((x) => x.id === aid)
+                if (!a) return null
+                return (
+                  <span key={aid} className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs border ${TYPE_COLORS[a.type]}`}>
+                    {n(a.code)}
+                    <button onClick={() => toggleApt(aid)} className="ml-0.5"><X className="w-3 h-3" /></button>
+                  </span>
+                )
+              })}
+            </div>
+          )}
         </div>
-        <div className="flex gap-2 mt-4">
-          <button onClick={onClose} className="flex-1 bg-app border border-line rounded-lg py-2.5 text-sm font-medium text-ink">
-            {t.timesheet.cancel}
-          </button>
-          <button onClick={onSave} className="flex-1 bg-accent text-white rounded-lg py-2.5 text-sm font-medium">
-            {t.timesheet.save}
-          </button>
+
+        <div className="sticky bottom-0 bg-surface px-5 py-4 border-t border-line flex gap-2">
+          {wd && (
+            <button onClick={handleDelete} disabled={saving} className="px-3 py-2.5 bg-bad-soft text-bad rounded-lg text-sm font-medium border border-line">
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
+          <button onClick={onClose} className="flex-1 bg-app border border-line rounded-lg py-2.5 text-sm font-medium text-ink">{t.timesheet.cancel}</button>
+          <button onClick={handleSave} disabled={saving} className="flex-1 bg-accent text-white rounded-lg py-2.5 text-sm font-medium disabled:opacity-50">{t.timesheet.save}</button>
         </div>
       </div>
     </div>
   )
 }
 
+// ── Bonus Modal ──────────────────────────────────────────────
+
 interface BonusModalProps {
   t: ReturnType<typeof useI18n>['t']
   n: ReturnType<typeof useI18n>['n']
-  data: { staff_id: number; amount: string; note: string; id?: string }
-  onChange: (d: { staff_id: number; amount: string; note: string; id?: string }) => void
+  data: { staffId: number; amount: string; note: string; id?: string }
+  onChange: (d: { staffId: number; amount: string; note: string; id?: string }) => void
   onSave: () => void
   onClose: () => void
 }
 
 function BonusModal({ t, n, data, onChange, onSave, onClose }: BonusModalProps) {
   return (
-    <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center bg-black/40" onClick={onClose}>
-      <div className="bg-surface w-full max-w-lg rounded-t-2xl sm:rounded-2xl border border-line p-5" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center bg-black/40 anim-scrim" onClick={onClose}>
+      <div className="bg-surface w-full max-w-lg rounded-t-2xl sm:rounded-2xl border border-line p-5 anim-sheet" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-base font-semibold text-ink">{t.timesheet.editBonus}</h2>
+          <h2 className="text-base font-semibold text-ink">{t.timesheet.bonus}</h2>
           <button onClick={onClose} className="p-1 text-muted hover:text-ink"><X className="w-5 h-5" /></button>
         </div>
         <div className="space-y-3">
           <div>
-            <label className="text-sm text-muted block mb-1">{t.timesheet.bonusAmount}</label>
-            <input
-              type="number"
-              step="1"
-              value={data.amount}
+            <label className="text-sm text-muted block mb-1">{t.timesheet.bonus}</label>
+            <input type="number" step="1" value={data.amount}
               onChange={(e) => onChange({ ...data, amount: e.target.value })}
-              className="w-full bg-app border border-line rounded-lg px-3 py-2.5 text-sm text-ink"
-            />
+              className="w-full bg-app border border-line rounded-lg px-3 py-2.5 text-sm text-ink" />
           </div>
           <div>
             <label className="text-sm text-muted block mb-1">{t.timesheet.note}</label>
-            <input
-              type="text"
-              value={data.note}
+            <input type="text" value={data.note}
               onChange={(e) => onChange({ ...data, note: e.target.value })}
               placeholder={t.timesheet.notePlaceholder}
-              className="w-full bg-app border border-line rounded-lg px-3 py-2.5 text-sm text-ink"
-            />
+              className="w-full bg-app border border-line rounded-lg px-3 py-2.5 text-sm text-ink" />
           </div>
         </div>
         <div className="flex gap-2 mt-4">
-          <button onClick={onClose} className="flex-1 bg-app border border-line rounded-lg py-2.5 text-sm font-medium text-ink">
-            {t.timesheet.cancel}
-          </button>
-          <button onClick={onSave} className="flex-1 bg-accent text-white rounded-lg py-2.5 text-sm font-medium">
-            {t.timesheet.save}
-          </button>
+          <button onClick={onClose} className="flex-1 bg-app border border-line rounded-lg py-2.5 text-sm font-medium text-ink">{t.timesheet.cancel}</button>
+          <button onClick={onSave} className="flex-1 bg-accent text-white rounded-lg py-2.5 text-sm font-medium">{t.timesheet.save}</button>
         </div>
       </div>
     </div>

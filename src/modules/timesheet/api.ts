@@ -1,19 +1,27 @@
 import { supabase } from '@/lib/supabase'
 
+export type AptType = 'studio' | '1br' | '2br'
+
 export interface HkStaff {
   id: number
   full_name: string
 }
 
-export interface Shift {
+export interface WorkDay {
   id: string
   staff_id: number
   work_date: string
-  start_time: string
-  end_time: string
-  apartment_id: number | null
-  apt_type: 'studio' | '1br' | '2br' | null
+  open_time: string
+  close_time: string
   note: string | null
+}
+
+export interface WorkLine {
+  id: string
+  work_day_id: string
+  apartment_id: number | null
+  apt_type: AptType | null
+  sort_order: number
 }
 
 export interface Bonus {
@@ -25,7 +33,7 @@ export interface Bonus {
 }
 
 export interface NormHour {
-  apt_type: 'studio' | '1br' | '2br'
+  apt_type: AptType
   hours: number
 }
 
@@ -87,50 +95,69 @@ export async function fetchHousekeepers(): Promise<HkStaff[]> {
 }
 
 export async function fetchWeekReport(weekStart: string): Promise<WeekRow[]> {
-  const { data, error } = await supabase.rpc('hk_week_report', {
-    p_week_start: weekStart,
-  })
+  const { data, error } = await supabase.rpc('hk_week_report', { p_week_start: weekStart })
   if (error) throw error
   return (data ?? []) as WeekRow[]
 }
 
-export async function fetchShifts(weekStart: string): Promise<Shift[]> {
+export async function fetchWorkDays(weekStart: string): Promise<WorkDay[]> {
   const end = toIso(addDays(parseIso(weekStart), 7))
   const { data, error } = await supabase
-    .from('hk_shifts')
-    .select('id, staff_id, work_date, start_time, end_time, apartment_id, apt_type, note')
+    .from('hk_work_days')
+    .select('id, staff_id, work_date, open_time, close_time, note')
     .gte('work_date', weekStart)
     .lt('work_date', end)
     .order('work_date')
-    .order('start_time')
   if (error) throw error
-  return (data ?? []) as Shift[]
+  return (data ?? []) as WorkDay[]
 }
 
-export async function saveShift(shift: Partial<Shift> & { staff_id: number; work_date: string; start_time: string; end_time: string }): Promise<Shift> {
-  const { id, ...rest } = shift
+export async function saveWorkDay(wd: Partial<WorkDay> & { staff_id: number; work_date: string; open_time: string; close_time: string }): Promise<WorkDay> {
+  const { id, ...rest } = wd
   if (id) {
     const { data, error } = await supabase
-      .from('hk_shifts')
+      .from('hk_work_days')
       .update(rest)
       .eq('id', id)
-      .select('id, staff_id, work_date, start_time, end_time, apartment_id, apt_type, note')
+      .select('id, staff_id, work_date, open_time, close_time, note')
       .single()
     if (error) throw error
-    return data as Shift
+    return data as WorkDay
   }
   const { data, error } = await supabase
-    .from('hk_shifts')
-    .insert(rest)
-    .select('id, staff_id, work_date, start_time, end_time, apartment_id, apt_type, note')
+    .from('hk_work_days')
+    .upsert(rest, { onConflict: 'staff_id,work_date' })
+    .select('id, staff_id, work_date, open_time, close_time, note')
     .single()
   if (error) throw error
-  return data as Shift
+  return data as WorkDay
 }
 
-export async function deleteShift(id: string): Promise<void> {
-  const { error } = await supabase.from('hk_shifts').delete().eq('id', id)
+export async function deleteWorkDay(id: string): Promise<void> {
+  const { error } = await supabase.from('hk_work_days').delete().eq('id', id)
   if (error) throw error
+}
+
+export async function fetchWorkLines(workDayIds: string[]): Promise<WorkLine[]> {
+  if (workDayIds.length === 0) return []
+  const { data, error } = await supabase
+    .from('hk_work_lines')
+    .select('id, work_day_id, apartment_id, apt_type, sort_order')
+    .in('work_day_id', workDayIds)
+    .order('sort_order')
+  if (error) throw error
+  return (data ?? []) as WorkLine[]
+}
+
+export async function syncWorkLines(workDayId: string, apts: { apartment_id: number; apt_type: AptType }[]): Promise<void> {
+  const { error: delErr } = await supabase.from('hk_work_lines').delete().eq('work_day_id', workDayId)
+  if (delErr) throw delErr
+  if (apts.length > 0) {
+    const { error: insErr } = await supabase.from('hk_work_lines').insert(
+      apts.map((a, i) => ({ work_day_id: workDayId, apartment_id: a.apartment_id, apt_type: a.apt_type, sort_order: i }))
+    )
+    if (insErr) throw insErr
+  }
 }
 
 export async function fetchBonuses(weekStart: string): Promise<Bonus[]> {
@@ -145,36 +172,24 @@ export async function fetchBonuses(weekStart: string): Promise<Bonus[]> {
 export async function saveBonus(bonus: Partial<Bonus> & { staff_id: number; week_start: string; amount: number }): Promise<Bonus> {
   const { id, ...rest } = bonus
   if (id) {
-    const { data, error } = await supabase
-      .from('hk_bonuses')
-      .update(rest)
-      .eq('id', id)
-      .select('id, staff_id, week_start, amount, note')
-      .single()
+    const { data, error } = await supabase.from('hk_bonuses').update(rest).eq('id', id)
+      .select('id, staff_id, week_start, amount, note').single()
     if (error) throw error
     return data as Bonus
   }
-  const { data, error } = await supabase
-    .from('hk_bonuses')
-    .insert(rest)
-    .select('id, staff_id, week_start, amount, note')
-    .single()
+  const { data, error } = await supabase.from('hk_bonuses').insert(rest)
+    .select('id, staff_id, week_start, amount, note').single()
   if (error) throw error
   return data as Bonus
 }
 
 export async function fetchNormHours(): Promise<NormHour[]> {
-  const { data, error } = await supabase
-    .from('hk_norm_hours')
-    .select('apt_type, hours')
-    .order('apt_type')
+  const { data, error } = await supabase.from('hk_norm_hours').select('apt_type, hours').order('apt_type')
   if (error) throw error
   return (data ?? []) as NormHour[]
 }
 
-export async function saveNormHour(apt_type: NormHour['apt_type'], hours: number): Promise<void> {
-  const { error } = await supabase
-    .from('hk_norm_hours')
-    .upsert({ apt_type, hours })
+export async function saveNormHour(apt_type: AptType, hours: number): Promise<void> {
+  const { error } = await supabase.from('hk_norm_hours').upsert({ apt_type, hours })
   if (error) throw error
 }
