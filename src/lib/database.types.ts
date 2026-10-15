@@ -394,3 +394,43 @@ export interface POReceiveResult {
   lines: number
   order_status: POStatus
 }
+
+// ── Табель хаускипинга ───────────────────────────────────────────────────
+export interface HkStaff {
+  id: number
+  full_name: string
+  active: boolean
+}
+
+export interface HkApartment {
+  id: number
+  code: string
+  building: string
+  type: AptType
+  status: string
+}
+
+export interface HkShift {
+  id: number
+  staff_id: number
+  work_date: string
+  start_time: string
+  end_time: string
+  note: string | null
+  hours: number
+}
+
+export interface HkLine {
+  shift_id: number
+  staff_id: number
+  work_date: string
+  apartment_id: number
+  bonus: number
+  share: number
+  cleaners: number
+}
+
+export interface HkClosure {
+  week_start: string
+  closed_at: string
+}

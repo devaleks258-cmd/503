@@ -4,6 +4,13 @@ import App from './App.tsx';
 import './index.css';
 import { supabaseConfigMissing } from './lib/supabase';
 
+// Перезагрузка после обновления service worker не должна стирать несохранённый ввод (лист смены, формы):
+// если открыт диалог или идёт ввод — откладываем до следующего открытия приложения.
+function reloadWhenIdle() {
+  const busy = document.querySelector('[role="dialog"]') || document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement
+  if (!busy) window.location.reload()
+}
+
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js', { scope: '/' }).then((reg) => {
@@ -12,7 +19,7 @@ if ('serviceWorker' in navigator) {
         if (!newWorker) return
         newWorker.addEventListener('statechange', () => {
           if (newWorker.state === 'activated' && navigator.serviceWorker.controller) {
-            window.location.reload()
+            reloadWhenIdle()
           }
         })
       })
@@ -21,7 +28,7 @@ if ('serviceWorker' in navigator) {
       }
     }).catch(() => {})
     navigator.serviceWorker.addEventListener('controllerchange', () => {
-      window.location.reload()
+      reloadWhenIdle()
     })
   })
 }
