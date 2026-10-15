@@ -543,6 +543,7 @@ export const ar: Dict = {
     title: 'الجدول',
     workDay: 'يوم شغل',
     weekSummary: 'إجمالي الأسبوع',
+    apartment: 'الشقة',
     totalHours: 'اتشتغل',
     normHours: 'النورم',
     actual: 'فعلي',

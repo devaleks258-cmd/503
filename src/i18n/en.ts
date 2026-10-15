@@ -542,6 +542,7 @@ export const en: Dict = {
     title: 'Timesheet',
     workDay: 'Work day',
     weekSummary: 'Week summary',
+    apartment: 'Apartment',
     totalHours: 'Worked',
     normHours: 'Norm',
     actual: 'Actual',

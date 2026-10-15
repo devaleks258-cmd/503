@@ -2,12 +2,12 @@ import { useEffect, useState, useMemo, useCallback } from 'react'
 import { useI18n } from '@/i18n'
 import { toast, errorMessage } from '@/lib/toast'
 import { fetchApartments } from '@/modules/apartments/api'
-import { ChevronLeft, ChevronRight, Plus, Trash2, Clock, X, Search, Download, CalendarDays } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Trash2, Clock, X, Search, Download } from 'lucide-react'
 import {
-  fetchHousekeepers, fetchWeekReport, fetchWorkDays, saveWorkDay, deleteWorkDay,
+  fetchWeekReport, fetchWorkDays, saveWorkDay, deleteWorkDay,
   fetchWorkLines, syncWorkLines, fetchBonuses, saveBonus, fetchNormHours, saveNormHour,
   toIso, parseIso, mondayOf, addDays, hhmm, shiftHours,
-  type HkStaff, type WeekRow, type WorkDay, type WorkLine, type Bonus, type NormHour, type AptType,
+  type WeekRow, type WorkDay, type WorkLine, type Bonus, type NormHour, type AptType,
 } from '@/modules/timesheet/api'
 import type { SvApartment } from '@/lib/database.types'
 
@@ -34,14 +34,11 @@ export function TimesheetPage() {
   const [report, setReport] = useState<WeekRow[]>([])
   const [workDays, setWorkDays] = useState<WorkDay[]>([])
   const [workLines, setWorkLines] = useState<WorkLine[]>([])
-  const [housekeepers, setHousekeepers] = useState<HkStaff[]>([])
   const [apartments, setApartments] = useState<AptPick[]>([])
   const [normHours, setNormHours] = useState<NormHour[]>([])
   const [bonuses, setBonuses] = useState<Bonus[]>([])
-  const [expanded, setExpanded] = useState<number | null>(null)
   const [dayEditor, setDayEditor] = useState<{ staffId: number; date: string; wd: WorkDay | null } | null>(null)
   const [bonusEditor, setBonusEditor] = useState<{ staffId: number; amount: string; note: string; id?: string } | null>(null)
-  const [showSummary, setShowSummary] = useState(false)
   const [showNorms, setShowNorms] = useState(false)
   const [normEdits, setNormEdits] = useState<Record<AptType, string>>({ studio: '', '1br': '', '2br': '' })
   const [loading, setLoading] = useState(true)
@@ -50,10 +47,10 @@ export function TimesheetPage() {
     setLoading(true)
     try {
       const [r, wd, hk, apts, nh, bn] = await Promise.all([
-        fetchWeekReport(weekStart), fetchWorkDays(weekStart), fetchHousekeepers(),
-        fetchApartments(), fetchNormHours(), fetchBonuses(weekStart),
+        fetchWeekReport(weekStart), fetchWorkDays(weekStart), fetchApartments(),
+        fetchNormHours(), fetchBonuses(weekStart),
       ])
-      setReport(r); setWorkDays(wd); setHousekeepers(hk)
+      setReport(r); setWorkDays(wd)
       setApartments(apts.map((a: SvApartment) => ({ id: a.id, code: a.code, type: a.type as AptType, building: a.building })))
       setNormHours(nh); setBonuses(bn)
       const ne: Record<AptType, string> = { studio: '', '1br': '', '2br': '' }
@@ -152,166 +149,110 @@ export function TimesheetPage() {
     a.click(); URL.revokeObjectURL(url)
   }
 
+  const staffRows = report.map((row) => {
+    const staffDays = daysByStaff[row.staff_id] ?? {}
+    const apartmentCount = Object.values(staffDays).reduce((sum, day) => sum + (linesByDay[day.id] ?? []).length, 0)
+    return { row, staffDays, bonus: bonusByStaff[row.staff_id]?.[0], apartmentCount }
+  })
+
   return (
-    <div className="px-4 pt-6 pb-28">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-semibold text-ink">{t.timesheet.title}</h1>
-        <button onClick={exportCSV} className="flex items-center gap-1.5 text-sm text-accent bg-accent-soft px-3 py-1.5 rounded-lg hover:opacity-80 transition-opacity">
+    <div className="px-3 pt-5 pb-28">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div>
+          <h1 className="text-xl font-semibold text-ink">{t.timesheet.title}</h1>
+          <p className="text-xs text-muted mt-0.5">{n(weekLabel)}</p>
+        </div>
+        <button onClick={exportCSV} className="shrink-0 flex items-center gap-1.5 text-sm font-medium text-accent bg-accent-soft px-3 py-2 rounded-lg hover:opacity-80 transition-opacity">
           <Download className="w-4 h-4" /> CSV
         </button>
       </div>
 
-      {/* Week nav */}
-      <div className="flex items-center justify-between gap-2 mb-4">
-        <button onClick={prevWeek} className="p-2 rounded-lg bg-surface border border-line text-ink hover:bg-app transition-colors">
-          <ChevronLeft className="w-5 h-5 rtl:rotate-180" />
-        </button>
-        <button onClick={thisWeek} className="flex-1 text-center bg-surface border border-line rounded-lg py-2 text-sm font-medium text-ink hover:bg-app transition-colors">
-          {n(weekLabel)}
-        </button>
-        <button onClick={nextWeek} className="p-2 rounded-lg bg-surface border border-line text-ink hover:bg-app transition-colors">
-          <ChevronRight className="w-5 h-5 rtl:rotate-180" />
-        </button>
+      <div className="flex items-center gap-2 mb-4">
+        <button onClick={prevWeek} className="p-2 rounded-lg bg-surface border border-line text-ink hover:bg-app transition-colors"><ChevronLeft className="w-5 h-5 rtl:rotate-180" /></button>
+        <button onClick={thisWeek} className="flex-1 bg-surface border border-line rounded-lg py-2 text-sm font-medium text-ink hover:bg-app transition-colors">{t.timesheet.weekSummary}: {n(weekLabel)}</button>
+        <button onClick={nextWeek} className="p-2 rounded-lg bg-surface border border-line text-ink hover:bg-app transition-colors"><ChevronRight className="w-5 h-5 rtl:rotate-180" /></button>
       </div>
 
-      {/* Summary toggle */}
-      <button onClick={() => setShowSummary(v => !v)} className="w-full mb-3 bg-surface border border-line rounded-xl px-4 py-2.5 flex items-center justify-between text-sm text-ink hover:bg-app transition-colors">
-        <span>{t.timesheet.weekSummary}</span>
-        <CalendarDays className="w-4 h-4 text-muted" />
-      </button>
-      {showSummary && (
-        <div className="grid grid-cols-3 gap-2 mb-4">
-          <div className="bg-surface border border-line rounded-xl p-3 text-center">
-            <p className="text-xs text-muted mb-1">{t.timesheet.totalHours}</p>
-            <p className="text-lg font-semibold text-ink">{n(totals.total.toFixed(1))}</p>
-          </div>
-          <div className="bg-surface border border-line rounded-xl p-3 text-center">
-            <p className="text-xs text-muted mb-1">{t.timesheet.normHours}</p>
-            <p className="text-lg font-semibold text-ink">{n(totals.norm.toFixed(1))}</p>
-          </div>
-          <div className="bg-surface border border-line rounded-xl p-3 text-center">
-            <p className="text-xs text-muted mb-1">{t.timesheet.bonus}</p>
-            <p className="text-lg font-semibold text-ink">{n(totals.bonus.toFixed(0))}</p>
-          </div>
+      <div className="flex gap-2 mb-4 overflow-x-auto">
+        <div className="min-w-[130px] flex-1 rounded-xl border border-line bg-surface px-3 py-2">
+          <p className="text-[11px] text-muted">{t.timesheet.totalHours}</p><p className="text-lg font-semibold text-ink">{n(totals.total.toFixed(1))}{t.timesheet.hoursShort}</p>
         </div>
-      )}
-
-      {/* Norms toggle */}
-      <button onClick={() => setShowNorms(v => !v)} className="w-full mb-4 bg-surface border border-line rounded-xl px-4 py-2.5 flex items-center justify-between text-sm text-ink hover:bg-app transition-colors">
-        <span>{t.timesheet.normHoursTitle}</span>
-        <Clock className="w-4 h-4 text-muted" />
-      </button>
-      {showNorms && (
-        <div className="bg-surface border border-line rounded-xl p-4 mb-4 space-y-3">
-          {(['studio', '1br', '2br'] as AptType[]).map((at) => (
-            <div key={at} className="flex items-center gap-3">
-              <span className={`w-2.5 h-2.5 rounded-full ${TYPE_DOT[at]}`} />
-              <label className="text-sm text-muted w-24 flex-shrink-0">{t.timesheet[`norm_${at}` as keyof typeof t.timesheet] as string}</label>
-              <input type="number" step="0.5" value={normEdits[at]}
-                onChange={(e) => setNormEdits(p => ({ ...p, [at]: e.target.value }))}
-                className="flex-1 bg-app border border-line rounded-lg px-3 py-2 text-sm text-ink" />
-              <span className="text-sm text-muted">{t.timesheet.hoursShort}</span>
-            </div>
-          ))}
-          <button onClick={handleSaveNorms} className="w-full mt-1 bg-accent text-white rounded-lg py-2.5 text-sm font-medium">{t.timesheet.save}</button>
+        <div className="min-w-[130px] flex-1 rounded-xl border border-line bg-surface px-3 py-2">
+          <p className="text-[11px] text-muted">{t.timesheet.normHours}</p><p className="text-lg font-semibold text-ink">{n(totals.norm.toFixed(1))}{t.timesheet.hoursShort}</p>
         </div>
-      )}
+        <div className="min-w-[130px] flex-1 rounded-xl border border-line bg-surface px-3 py-2">
+          <p className="text-[11px] text-muted">{t.timesheet.bonus}</p><p className="text-lg font-semibold text-ink">{n(totals.bonus.toFixed(0))}</p>
+        </div>
+      </div>
 
-      {/* Staff cards */}
-      {loading && <p className="text-center text-muted py-8">{t.app.loading}</p>}
-      {!loading && report.length === 0 && <p className="text-center text-muted py-8">{t.timesheet.noStaff}</p>}
-
-      <div className="space-y-2">
-        {report.map((row) => {
-          const isOpen = expanded === row.staff_id
-          const staffDays = daysByStaff[row.staff_id] ?? {}
-          const staffBonus = bonusByStaff[row.staff_id]?.[0]
-          return (
-            <div key={row.staff_id} className="bg-surface border border-line rounded-xl overflow-hidden">
-              <button onClick={() => setExpanded(isOpen ? null : row.staff_id)} className="w-full px-4 py-3 flex items-center justify-between text-left">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-ink">{row.full_name}</p>
-                  <p className="text-xs text-muted">
-                    {n(row.total_hours.toFixed(1))}{t.timesheet.hoursShort} / {n(row.norm_hours.toFixed(1))}{t.timesheet.hoursShort}
-                    {row.bonus > 0 && ` + ${n(row.bonus.toFixed(0))}`}
-                  </p>
-                </div>
-                <ChevronRight className={`w-5 h-5 text-muted transition-transform ${isOpen ? 'rotate-90 rtl:-rotate-90' : ''}`} />
-              </button>
-
-              {isOpen && (
-                <div className="px-4 pb-4 border-t border-line">
-                  {/* Mon–Sun bar */}
-                  <div className="grid grid-cols-7 gap-1 mt-3">
-                    {DAYS.map((di) => {
-                      const date = weekDates[di]
-                      const wd = staffDays[date]
-                      const dayLines = wd ? (linesByDay[wd.id] ?? []) : []
-                      const dayNorm = dayLines.reduce((s, l) => s + (l.apt_type ? normMap[l.apt_type] ?? 0 : 0), 0)
-                      return (
-                        <button key={di} onClick={() => openDayEditor(row.staff_id, date)}
-                          className={`rounded-lg p-1.5 flex flex-col items-center gap-0.5 border transition-colors ${
-                            wd ? 'border-accent bg-accent-soft' : 'border-line bg-app hover:border-accent'
-                          }`}>
-                          <span className="text-[10px] font-medium text-muted">
-                            {t.timesheet[`day_${DAY_KEY[di]}` as keyof typeof t.timesheet] as string}
-                          </span>
-                          <span className="text-[10px] text-muted">{n(date.slice(5))}</span>
-                          {wd ? (
-                            <span className="text-[10px] font-semibold text-accent leading-tight">
-                              {n(hhmm(wd.open_time))}<br/>{n(hhmm(wd.close_time))}
-                            </span>
-                          ) : (
-                            <Plus className="w-3 h-3 text-muted mt-0.5" />
-                          )}
-                          {dayNorm > 0 && (
-                            <span className="text-[9px] text-muted">{n(dayNorm.toFixed(1))}{t.timesheet.hoursShort}</span>
-                          )}
-                        </button>
-                      )
-                    })}
+      <div className="rounded-2xl border border-line bg-surface shadow-sm overflow-hidden">
+        {loading && <p className="text-center text-muted py-10">{t.app.loading}</p>}
+        {!loading && report.length === 0 && <p className="text-center text-muted py-10">{t.timesheet.noStaff}</p>}
+        {!loading && report.length > 0 && (
+          <div className="overflow-x-auto">
+            <div className="min-w-[1050px]">
+              <div className="grid grid-cols-[148px_108px_repeat(7,92px)_78px_82px_82px_92px] bg-[#1e527d] text-white text-xs font-semibold">
+                <div className="px-3 py-2.5 border-r border-white/20">{t.timesheet.colName}</div>
+                <div className="px-2 py-2.5 border-r border-white/20">{t.timesheet.apartment}</div>
+                {DAYS.map((di) => (
+                  <div key={di} className={`text-center py-1.5 border-r border-white/20 ${di > 4 ? 'bg-[#856600]' : ''}`}>
+                    <div>{t.timesheet[`day_${DAY_KEY[di]}` as keyof typeof t.timesheet] as string}</div>
+                    <div className="font-normal text-[11px]">{n(weekDates[di].slice(5))}</div>
                   </div>
+                ))}
+                <div className="text-center px-1 py-2.5 border-r border-white/20">{t.timesheet.apartment}</div>
+                <div className="text-center px-1 py-2.5 border-r border-white/20">{t.timesheet.normHours}</div>
+                <div className="text-center px-1 py-2.5 border-r border-white/20">{t.timesheet.actual}</div>
+                <div className="text-center px-1 py-2.5">{t.timesheet.bonus}</div>
+              </div>
 
-                  {/* Bonus row */}
-                  <div className="mt-3 pt-3 border-t border-line">
-                    <button onClick={() => openBonusEditor(row.staff_id)} className="w-full flex items-center justify-between text-sm text-ink py-1.5">
-                      <span className="text-muted">{t.timesheet.bonus}</span>
-                      <span className="font-medium">{n((staffBonus?.amount ?? 0).toFixed(0))}</span>
-                    </button>
-                  </div>
+              {staffRows.map(({ row, staffDays, bonus, apartmentCount }) => (
+                <div key={row.staff_id} className="grid grid-cols-[148px_108px_repeat(7,92px)_78px_82px_82px_92px] border-t-2 border-slate-700 bg-white dark:bg-slate-900">
+                  <div className="row-span-5 flex items-center px-3 py-3 border-r border-line bg-slate-50 dark:bg-slate-800 font-semibold text-sm text-ink">{row.full_name}</div>
+                  {(['studio', '1br', '2br'] as AptType[]).map((at, index) => (
+                    <div key={at} className="contents">
+                      <div className="h-9 px-2 flex items-center border-r border-b border-line text-xs text-muted bg-slate-50/70 dark:bg-slate-800/60">{t.timesheet[`norm_${at}` as keyof typeof t.timesheet] as string} {index + 1}</div>
+                      {DAYS.map((di) => {
+                        const date = weekDates[di]
+                        const wd = staffDays[date]
+                        const line = wd ? (linesByDay[wd.id] ?? []).find((l) => l.apt_type === at) : undefined
+                        const apt = line?.apartment_id ? apartments.find((a) => a.id === line.apartment_id) : undefined
+                        return <button key={`${at}-${di}`} onClick={() => openDayEditor(row.staff_id, date)} className={`h-9 px-1.5 text-xs text-left border-r border-b border-line truncate hover:ring-2 hover:ring-accent hover:z-10 transition-all ${apt ? TYPE_COLORS[at] : 'bg-white dark:bg-slate-900'}`}>{apt ? n(apt.code) : ''}</button>
+                      })}
+                      {index === 0 && <div className="row-span-3 flex items-center justify-center border-r border-b border-line text-sm font-semibold text-ink">{n(String(apartmentCount))}</div>}
+                      {index === 0 && <div className="row-span-3 flex items-center justify-center border-r border-b border-line text-sm font-semibold text-ink">{n(row.norm_hours.toFixed(1))}</div>}
+                      {index === 0 && <div className="row-span-3 flex items-center justify-center border-r border-b border-line text-sm font-semibold text-ink">{n(row.total_hours.toFixed(1))}</div>}
+                      {index === 0 && <button onClick={() => openBonusEditor(row.staff_id)} className="row-span-5 flex items-center justify-center border-b border-line bg-yellow-300 dark:bg-yellow-700/70 text-sm font-semibold text-slate-900 dark:text-white hover:bg-yellow-200 transition-colors">{n((bonus?.amount ?? 0).toFixed(0))}</button>}
+                    </div>
+                  ))}
+                  <div className="h-9 px-2 flex items-center border-r border-line text-xs text-muted bg-yellow-50 dark:bg-yellow-900/20">{t.timesheet.openTime}</div>
+                  {DAYS.map((di) => { const wd = staffDays[weekDates[di]]; return <button key={`open-${di}`} onClick={() => openDayEditor(row.staff_id, weekDates[di])} className="h-9 text-xs font-medium text-center border-r border-line bg-yellow-100 dark:bg-yellow-900/40 text-slate-800 dark:text-yellow-100 hover:bg-yellow-200">{wd ? n(hhmm(wd.open_time)) : ''}</button> })}
+                  <div className="h-9 col-span-4 border-line" />
+                  <div className="h-9 px-2 flex items-center border-r border-t border-line text-xs text-muted bg-yellow-50 dark:bg-yellow-900/20">{t.timesheet.closeTime}</div>
+                  {DAYS.map((di) => { const wd = staffDays[weekDates[di]]; return <button key={`close-${di}`} onClick={() => openDayEditor(row.staff_id, weekDates[di])} className="h-9 text-xs font-medium text-center border-r border-t border-line bg-yellow-100 dark:bg-yellow-900/40 text-slate-800 dark:text-yellow-100 hover:bg-yellow-200">{wd ? n(hhmm(wd.close_time)) : ''}</button> })}
+                  <div className="h-9 col-span-4 border-t border-line" />
                 </div>
-              )}
+              ))}
             </div>
-          )
-        })}
-      </div>
-
-      {/* Type legend */}
-      <div className="flex items-center gap-4 mt-4 justify-center">
-        {(['studio', '1br', '2br'] as AptType[]).map((at) => (
-          <div key={at} className="flex items-center gap-1.5">
-            <span className={`w-2.5 h-2.5 rounded-full ${TYPE_DOT[at]}`} />
-            <span className="text-xs text-muted">{t.timesheet[`norm_${at}` as keyof typeof t.timesheet] as string}</span>
           </div>
-        ))}
+        )}
       </div>
 
-      {dayEditor && (
-        <DayEditor
-          t={t} n={n} staffId={dayEditor.staffId} date={dayEditor.date} wd={dayEditor.wd}
-          apartments={apartments} normMap={normMap} existingLines={dayEditor.wd ? linesByDay[dayEditor.wd.id] ?? [] : []}
-          onClose={() => setDayEditor(null)}
-          onSaved={() => { setDayEditor(null); load() }}
-        />
-      )}
+      <div className="flex flex-wrap items-center gap-3 mt-3 text-xs text-muted">
+        {(['studio', '1br', '2br'] as AptType[]).map((at) => <span key={at} className="flex items-center gap-1.5"><span className={`w-2.5 h-2.5 rounded-full ${TYPE_DOT[at]}`} />{t.timesheet[`norm_${at}` as keyof typeof t.timesheet] as string}</span>)}
+        <button onClick={() => setShowNorms(v => !v)} className="ml-auto flex items-center gap-1 text-accent"><Clock className="w-3.5 h-3.5" />{t.timesheet.normHoursTitle}</button>
+      </div>
 
-      {bonusEditor && (
-        <BonusModal t={t} n={n} data={bonusEditor} onChange={setBonusEditor} onSave={handleSaveBonus} onClose={() => setBonusEditor(null)} />
-      )}
+      {showNorms && <div className="mt-3 rounded-xl border border-line bg-surface p-4 space-y-3">
+        {(['studio', '1br', '2br'] as AptType[]).map((at) => <div key={at} className="flex items-center gap-3"><span className={`w-2.5 h-2.5 rounded-full ${TYPE_DOT[at]}`} /><label className="text-sm text-muted w-24">{t.timesheet[`norm_${at}` as keyof typeof t.timesheet] as string}</label><input type="number" step="0.5" value={normEdits[at]} onChange={(e) => setNormEdits(p => ({ ...p, [at]: e.target.value }))} className="flex-1 bg-app border border-line rounded-lg px-3 py-2 text-sm text-ink" /><span className="text-sm text-muted">{t.timesheet.hoursShort}</span></div>)}
+        <button onClick={handleSaveNorms} className="w-full bg-accent text-white rounded-lg py-2.5 text-sm font-medium">{t.timesheet.save}</button>
+      </div>}
+
+      {dayEditor && <DayEditor t={t} n={n} staffId={dayEditor.staffId} date={dayEditor.date} wd={dayEditor.wd} apartments={apartments} normMap={normMap} existingLines={dayEditor.wd ? linesByDay[dayEditor.wd.id] ?? [] : []} onClose={() => setDayEditor(null)} onSaved={() => { setDayEditor(null); load() }} />}
+      {bonusEditor && <BonusModal t={t} data={bonusEditor} onChange={setBonusEditor} onSave={handleSaveBonus} onClose={() => setBonusEditor(null)} />}
     </div>
   )
 }
-
 // ── Day Editor Sheet ──────────────────────────────────────────
 
 interface DayEditorProps {
@@ -491,14 +432,13 @@ function DayEditor({ t, n, staffId, date, wd, apartments, normMap, existingLines
 
 interface BonusModalProps {
   t: ReturnType<typeof useI18n>['t']
-  n: ReturnType<typeof useI18n>['n']
   data: { staffId: number; amount: string; note: string; id?: string }
   onChange: (d: { staffId: number; amount: string; note: string; id?: string }) => void
   onSave: () => void
   onClose: () => void
 }
 
-function BonusModal({ t, n, data, onChange, onSave, onClose }: BonusModalProps) {
+function BonusModal({ t, data, onChange, onSave, onClose }: BonusModalProps) {
   return (
     <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center bg-black/40 anim-scrim" onClick={onClose}>
       <div className="bg-surface w-full max-w-lg rounded-t-2xl sm:rounded-2xl border border-line p-5 anim-sheet" onClick={(e) => e.stopPropagation()}>

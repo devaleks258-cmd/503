@@ -540,6 +540,7 @@ export const ru = {
     title: 'Табель',
     workDay: 'Рабочий день',
     weekSummary: 'Итоги недели',
+    apartment: 'Квартира',
     totalHours: 'Отработано',
     normHours: 'Норма',
     actual: 'Факт',
