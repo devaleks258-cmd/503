@@ -4,6 +4,22 @@ import App from './App.tsx';
 import './index.css';
 import { supabaseConfigMissing } from './lib/supabase';
 
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' }).then((reg) => {
+      reg.addEventListener('updatefound', () => {
+        const newWorker = reg.installing
+        if (!newWorker) return
+        newWorker.addEventListener('statechange', () => {
+          if (newWorker.state === 'activated' && navigator.serviceWorker.controller) {
+            window.location.reload()
+          }
+        })
+      })
+    }).catch(() => {})
+  })
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     {supabaseConfigMissing ? (
