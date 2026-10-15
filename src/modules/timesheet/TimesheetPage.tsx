@@ -46,7 +46,7 @@ export function TimesheetPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [r, wd, hk, apts, nh, bn] = await Promise.all([
+      const [r, wd, apts, nh, bn] = await Promise.all([
         fetchWeekReport(weekStart), fetchWorkDays(weekStart), fetchApartments(),
         fetchNormHours(), fetchBonuses(weekStart),
       ])
