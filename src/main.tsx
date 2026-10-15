@@ -16,7 +16,13 @@ if ('serviceWorker' in navigator) {
           }
         })
       })
+      if (reg.waiting) {
+        reg.waiting.postMessage({ type: 'SKIP_WAITING' })
+      }
     }).catch(() => {})
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      window.location.reload()
+    })
   })
 }
 

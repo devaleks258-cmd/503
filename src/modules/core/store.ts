@@ -52,7 +52,12 @@ export const useAuth = create<AuthStore>((set) => ({
     const email = `${login.toLowerCase().trim()}@sklad.internal`
     const { error: authError } = await supabase.auth.signInWithPassword({ email, password })
     if (authError) {
-      set({ error: 'Неверный логин или пароль' })
+      const msg = authError.message || ''
+      if (msg.toLowerCase().includes('invalid login') || msg.toLowerCase().includes('invalid credentials')) {
+        set({ error: 'Неверный логин или пароль' })
+      } else {
+        set({ error: msg })
+      }
       return
     }
     const { data: { session } } = await supabase.auth.getSession()
@@ -60,14 +65,15 @@ export const useAuth = create<AuthStore>((set) => ({
       set({ error: 'Неверный логин или пароль' })
       return
     }
-    const { data: profile } = await supabase
+    const { data: profile, error: profileErr } = await supabase
       .from('profiles')
       .select('id,login,full_name,role,active,created_at')
       .eq('id', session.user.id)
       .single()
     if (!profile || !profile.active) {
       await supabase.auth.signOut()
-      set({ state: 'login', profile: null, error: 'Ваш аккаунт отключён. Обратитесь к администратору.' })
+      const reason = profileErr ? profileErr.message : (!profile ? 'Профиль не найден' : 'Аккаунт отключён')
+      set({ state: 'login', profile: null, error: reason })
       return
     }
     set({ state: 'ready', profile, error: null })
